@@ -43,7 +43,7 @@ public class DefaultIosDeviceChangeListener extends MobileChangeHandler implemen
 
         Mobile mobile = new Mobile();
 
-        mobile.setPlatform(MobileDevice.PLATFORM_IOS);
+        mobile.setPlatform(IosDevice.PLATFORM);
         mobile.setCreateTime(new Date());
         mobile.setId(mobileId);
         mobile.setName(IosUtil.getDeviceName(mobileId, isRealDevice));
@@ -85,7 +85,7 @@ public class DefaultIosDeviceChangeListener extends MobileChangeHandler implemen
         }
 
         // 截图并上传到服务器
-        UploadFile uploadFile = iosDevice.screenshotThenUploadToServer();
+        UploadFile uploadFile = iosDevice.screenshotAndUploadToServer();
         mobile.setImgPath(uploadFile.getFilePath());
 
         driver.quit();

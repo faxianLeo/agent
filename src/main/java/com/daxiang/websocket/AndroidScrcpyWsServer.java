@@ -18,7 +18,7 @@ import java.io.IOException;
 @Slf4j
 @Component
 @ServerEndpoint(value = "/scrcpy/android/{mobileId}/user/{username}/project/{projectId}")
-public class AndroidScrcpySocketServer extends DeviceSocketServer {
+public class AndroidScrcpyWsServer extends DeviceWsServer {
 
     private Scrcpy scrcpy;
 
@@ -60,25 +60,25 @@ public class AndroidScrcpySocketServer extends DeviceSocketServer {
         String operation = message.getString("operation");
         switch (operation) {
             case "m":
-                scrcpy.moveTo(message.getInteger("x"), message.getInteger("y"), message.getInteger("width"), message.getInteger("height"));
+                scrcpy.moveTo(message.getIntValue("x"), message.getIntValue("y"), message.getIntValue("width"), message.getIntValue("height"));
                 break;
             case "d":
-                scrcpy.touchDown(message.getInteger("x"), message.getInteger("y"), message.getInteger("width"), message.getInteger("height"));
+                scrcpy.touchDown(message.getIntValue("x"), message.getIntValue("y"), message.getIntValue("width"), message.getIntValue("height"));
                 break;
             case "u":
-                scrcpy.touchUp(message.getInteger("x"), message.getInteger("y"), message.getInteger("width"), message.getInteger("height"));
+                scrcpy.touchUp(message.getIntValue("x"), message.getIntValue("y"), message.getIntValue("width"), message.getIntValue("height"));
                 break;
-            case "home":
-                scrcpy.home();
+            case "k":
+                int keycode = message.getIntValue("keycode");
+                int metaState = message.getIntValue("metaState");
+                scrcpy.keyDown(keycode, metaState);
+                scrcpy.keyUp(keycode, metaState);
                 break;
-            case "back":
-                scrcpy.back();
+            case "kd":
+                scrcpy.keyDown(message.getIntValue("keycode"), message.getIntValue("metaState"));
                 break;
-            case "power":
-                scrcpy.power();
-                break;
-            case "menu":
-                scrcpy.menu();
+            case "ku":
+                scrcpy.keyUp(message.getIntValue("keycode"), message.getIntValue("metaState"));
                 break;
         }
     }

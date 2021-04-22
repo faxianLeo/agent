@@ -3,9 +3,11 @@ package com.daxiang.core.mobile.ios;
 import com.daxiang.App;
 import com.daxiang.core.PortProvider;
 import com.daxiang.core.mobile.MobileDevice;
+import com.daxiang.core.mobile.appium.AppiumNativePageSourceHandler;
 import com.daxiang.core.mobile.appium.AppiumServer;
 import com.daxiang.core.mobile.appium.IosNativePageSourceHandler;
 import com.daxiang.core.mobile.Mobile;
+import com.daxiang.model.page.Page;
 import com.daxiang.utils.UUIDUtil;
 import io.appium.java_client.ios.IOSDriver;
 import io.appium.java_client.ios.IOSStartScreenRecordingOptions;
@@ -14,7 +16,7 @@ import io.appium.java_client.remote.IOSMobileCapabilityType;
 import io.appium.java_client.remote.MobileCapabilityType;
 import io.appium.java_client.remote.MobilePlatform;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.exec.ExecuteWatchdog;
+import org.apache.commons.exec.ShutdownHookProcessDestroyer;
 import org.apache.commons.io.FileUtils;
 import org.openqa.selenium.Capabilities;
 import org.openqa.selenium.remote.DesiredCapabilities;
@@ -32,11 +34,12 @@ import java.util.Base64;
 @Slf4j
 public class IosDevice extends MobileDevice {
 
-    private ExecuteWatchdog iproxyMjpegServerWatchdog;
+    public static final int PLATFORM = 2;
+
+    private ShutdownHookProcessDestroyer mjpegServerIproxyProcessDestroyer;
 
     public IosDevice(Mobile mobile, AppiumServer appiumServer) {
         super(mobile, appiumServer);
-        nativePageSourceHandler = new IosNativePageSourceHandler();
     }
 
     @Override
@@ -49,7 +52,6 @@ public class IosDevice extends MobileDevice {
         DesiredCapabilities capabilities = new DesiredCapabilities();
         capabilities.setCapability(MobileCapabilityType.NO_RESET, true);
         capabilities.setCapability("waitForQuiescence", false);
-        capabilities.setCapability("skipLogCapture", true);
         capabilities.setCapability("useJSONSource", true); // Get JSON source from WDA and parse into XML on Appium server. This can be much faster, especially on large devices.
 
         // https://github.com/appium/appium-xcuitest-driver/blob/master/docs/real-device-config.md
@@ -93,6 +95,21 @@ public class IosDevice extends MobileDevice {
     }
 
     @Override
+    public int getNativePageType() {
+        return Page.TYPE_IOS_NATIVE;
+    }
+
+    @Override
+    public AppiumNativePageSourceHandler newAppiumNativePageSourceHandler() {
+        return new IosNativePageSourceHandler();
+    }
+
+    @Override
+    public String getLogType() {
+        return "syslog";
+    }
+
+    @Override
     public void uninstallApp(String app) {
         IosUtil.uninstallApp(driver, app);
     }
@@ -123,14 +140,14 @@ public class IosDevice extends MobileDevice {
     public long startMjpegServerIproxy() throws IOException {
         long mjpegServerPort = getMjpegServerPort();
         log.info("[{}]startMjpegServerIproxy", getId());
-        iproxyMjpegServerWatchdog = IosUtil.iproxy(mjpegServerPort, mjpegServerPort, getId());
+        mjpegServerIproxyProcessDestroyer = IosUtil.iproxy(mjpegServerPort, mjpegServerPort, getId());
         return mjpegServerPort;
     }
 
     public void stopMjpegServerIproxy() {
-        if (iproxyMjpegServerWatchdog != null) {
+        if (mjpegServerIproxyProcessDestroyer != null) {
             log.info("[{}]stopMjpegServerIproxy", getId());
-            iproxyMjpegServerWatchdog.destroyProcess();
+            mjpegServerIproxyProcessDestroyer.run();
         }
     }
 

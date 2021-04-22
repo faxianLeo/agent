@@ -50,4 +50,36 @@ public class MobileService {
         Device device = DeviceHolder.get(mobileId);
         return device == null ? null : ((MobileDevice) device).getMobile();
     }
+
+    public Mobile delete(String mobileId) {
+        if (StringUtils.isEmpty(mobileId)) {
+            throw new AgentException("mobileId不能为空");
+        }
+
+        Device device = DeviceHolder.remove(mobileId);
+        if (device == null) {
+            return null;
+        }
+
+        device.getDeviceServer().stop();
+        return ((MobileDevice) device).getMobile();
+    }
+
+    public String startLogsBroadcast(String mobileId, String sessionId) {
+        Device device = DeviceHolder.getConnectedDevice(mobileId);
+        if (device == null) {
+            throw new AgentException(mobileId + "未连接");
+        }
+
+        return ((MobileDevice) device).startLogsBroadcast(sessionId);
+    }
+
+    public void stopLogsBroadcast(String mobileId) {
+        Device device = DeviceHolder.getConnectedDevice(mobileId);
+        if (device == null) {
+            throw new AgentException(mobileId + "未连接");
+        }
+
+        ((MobileDevice) device).stopLogsBroadcast();
+    }
 }

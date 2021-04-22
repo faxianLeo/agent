@@ -6,6 +6,11 @@ import com.daxiang.model.action.*;
 import com.daxiang.model.devicetesttask.DeviceTestTask;
 import com.daxiang.model.devicetesttask.Testcase;
 import freemarker.template.TemplateException;
+import org.eclipse.jdt.core.ToolFactory;
+import org.eclipse.jdt.core.formatter.CodeFormatter;
+import org.eclipse.jface.text.BadLocationException;
+import org.eclipse.jface.text.Document;
+import org.eclipse.jface.text.IDocument;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 
@@ -39,7 +44,7 @@ public abstract class TestNGCodeConverter {
         List<Testcase> testcases = deviceTestTask.getTestcases();
         dataModel.put("testcases", testcases.stream().map(testcase -> {
             JSONObject tc = new JSONObject();
-            tc.put("invoke", getInvokeMethodStringWithParamNull(testcase));
+            tc.put("invoke", getInvokeMethodStringWithDefaultParamValue(testcase));
             tc.put("description", getTestcaseDesc(deviceTestTask, testcase));
             tc.put("dependsOnMethods", getTestcaseDependsOnMethods(testcase.getDepends()));
             tc.put("id", testcase.getId());
@@ -51,28 +56,28 @@ public abstract class TestNGCodeConverter {
         Action beforeClass = deviceTestTask.getBeforeClass();
         if (beforeClass != null) {
             actions.add(beforeClass);
-            String invokeBeforeClass = getInvokeMethodStringWithParamNull(beforeClass);
+            String invokeBeforeClass = getInvokeMethodStringWithDefaultParamValue(beforeClass);
             dataModel.put("beforeClass", invokeBeforeClass);
         }
 
         Action afterClass = deviceTestTask.getAfterClass();
         if (afterClass != null) {
             actions.add(afterClass);
-            String invokeAfterClass = getInvokeMethodStringWithParamNull(afterClass);
+            String invokeAfterClass = getInvokeMethodStringWithDefaultParamValue(afterClass);
             dataModel.put("afterClass", invokeAfterClass);
         }
 
         Action beforeMethod = deviceTestTask.getBeforeMethod();
         if (beforeMethod != null) {
             actions.add(beforeMethod);
-            String invokeBeforeMethod = getInvokeMethodStringWithParamNull(beforeMethod);
+            String invokeBeforeMethod = getInvokeMethodStringWithDefaultParamValue(beforeMethod);
             dataModel.put("beforeMethod", invokeBeforeMethod);
         }
 
         Action afterMethod = deviceTestTask.getAfterMethod();
         if (afterMethod != null) {
             actions.add(afterMethod);
-            String invokeAfterMethod = getInvokeMethodStringWithParamNull(afterMethod);
+            String invokeAfterMethod = getInvokeMethodStringWithDefaultParamValue(afterMethod);
             dataModel.put("afterMethod", invokeAfterMethod);
         }
 
@@ -98,8 +103,15 @@ public abstract class TestNGCodeConverter {
         dataModel.put("deviceTestTask", deviceTestTask);
 
         try {
-            return FreemarkerUtil.process(FTL_BASE_PACKAGE_PATH, FTL_FILE_NAME, dataModel);
-        } catch (IOException | TemplateException e) {
+            String code = FreemarkerUtil.process(FTL_BASE_PACKAGE_PATH, FTL_FILE_NAME, dataModel);
+
+            IDocument doc = new Document(code);
+            ToolFactory.createCodeFormatter(null)
+                    .format(CodeFormatter.K_COMPILATION_UNIT, code, 0, code.length(), 0, null)
+                    .apply(doc);
+
+            return doc.get();
+        } catch (IOException | TemplateException | BadLocationException e) {
             throw new TestNGCodeConvertException(e);
         }
     }
@@ -123,7 +135,8 @@ public abstract class TestNGCodeConverter {
         Integer enableRecordVideo = deviceTestTask.getTestPlan().getEnableRecordVideo();
         Integer failRetryCount = deviceTestTask.getTestPlan().getFailRetryCount();
 
-        return String.format("%s_%d_%d_%d_%d", deviceId, deviceTestTaskId, testcaseId, enableRecordVideo, failRetryCount);
+        return new TestDescription(deviceId, deviceTestTaskId, testcaseId,
+                enableRecordVideo, failRetryCount).toString();
     }
 
     private String getTestcaseDependsOnMethods(List<Integer> depends) {
@@ -163,12 +176,13 @@ public abstract class TestNGCodeConverter {
         });
     }
 
-    private String getInvokeMethodStringWithParamNull(Action action) {
+    private String getInvokeMethodStringWithDefaultParamValue(Action action) {
         StringBuilder invokeMethod = new StringBuilder(ACTION_PREFIX + action.getId() + "(");
         List<Param> actionParams = action.getParams();
-        // 如果有参数 则都传入null
         if (!CollectionUtils.isEmpty(actionParams)) {
-            invokeMethod.append(actionParams.stream().map(i -> "null").collect(Collectors.joining(",")));
+            invokeMethod.append(actionParams.stream()
+                    .map(param -> getDefaultJavaTypeValue(param.getType()))
+                    .collect(Collectors.joining(",")));
         }
         invokeMethod.append(");");
         return invokeMethod.toString();
@@ -182,15 +196,9 @@ public abstract class TestNGCodeConverter {
             Action cachedAction = cachedActions.get(action.getId());
             if (cachedAction == null) {
                 // steps
-                List<Step> steps = action.getSteps();
-                if (!CollectionUtils.isEmpty(steps)) {
-                    for (Step step : steps) {
-                        Action stepAction = step.getAction();
-                        if (stepAction != null) {
-                            parseActions(Arrays.asList(stepAction));
-                        }
-                    }
-                }
+                parseSteps(action.getSetUp());
+                parseSteps(action.getSteps());
+                parseSteps(action.getTearDown());
 
                 // importActions
                 List<Action> importActions = action.getImportActions();
@@ -203,12 +211,25 @@ public abstract class TestNGCodeConverter {
         }
     }
 
+    private void parseSteps(List<Step> steps) {
+        if (CollectionUtils.isEmpty(steps)) {
+            return;
+        }
+
+        for (Step step : steps) {
+            Action stepAction = step.getAction();
+            if (stepAction != null) {
+                parseActions(Arrays.asList(stepAction));
+            }
+        }
+    }
+
     /**
      * 处理globalVar value
      */
     private void handleGlobalVarValue(List<GlobalVar> globalVars) {
         if (!CollectionUtils.isEmpty(globalVars)) {
-            globalVars.forEach(globalVar -> globalVar.setValue(handleValue(globalVar.getValue())));
+            globalVars.forEach(globalVar -> globalVar.setValue(handleValue(globalVar.getType(), globalVar.getValue())));
         }
     }
 
@@ -218,36 +239,79 @@ public abstract class TestNGCodeConverter {
     private void handleActionValue() {
         Collection<Action> actions = cachedActions.values();
         for (Action action : actions) {
-            List<LocalVar> localVars = action.getLocalVars();
-            if (!CollectionUtils.isEmpty(localVars)) {
-                localVars.forEach(localVar -> localVar.setValue(handleValue(localVar.getValue())));
-            }
-
-            List<Step> steps = action.getSteps();
-            if (!CollectionUtils.isEmpty(steps)) {
-                for (Step step : steps) {
-                    // ExecuteJavaCode直接嵌入模版，无需处理
-                    if (step.getActionId() != BaseAction.EXECUTE_JAVA_CODE_ID) {
-                        List<String> args = step.getArgs();
-                        if (!CollectionUtils.isEmpty(args)) {
-                            List<String> newArgs = args.stream().map(this::handleValue).collect(Collectors.toList());
-                            step.setArgs(newArgs);
-                        }
-                    }
-                }
-            }
+            handleLocalVarValue(action.getLocalVars());
+            handleStepArgs(action.getSetUp());
+            handleStepArgs(action.getSteps());
+            handleStepArgs(action.getTearDown());
         }
     }
 
-    private String handleValue(String value) {
+    private void handleLocalVarValue(List<LocalVar> localVars) {
+        if (!CollectionUtils.isEmpty(localVars)) {
+            localVars.forEach(localVar -> localVar.setValue(handleValue(localVar.getType(), localVar.getValue())));
+        }
+    }
+
+    private void handleStepArgs(List<Step> steps) {
+        if (CollectionUtils.isEmpty(steps)) {
+            return;
+        }
+
+        for (Step step : steps) {
+            Integer stepActionId = step.getActionId();
+            // ExecuteJavaCode直接嵌入模版，无需处理
+            if (stepActionId == BaseAction.EXECUTE_JAVA_CODE_ID) {
+                continue;
+            }
+
+            List<Param> stepActionParams = cachedActions.get(stepActionId).getParams();
+            if (CollectionUtils.isEmpty(stepActionParams)) {
+                step.setArgs(new ArrayList<>(0));
+                continue;
+            }
+
+            List<String> args = step.getArgs();
+            List<String> newArgs = new ArrayList<>(stepActionParams.size()); // 以actionParam为准
+
+            for (int i = 0; i < stepActionParams.size(); i++) {
+                String type = stepActionParams.get(i).getType();
+                if (args != null && i < args.size()) {
+                    newArgs.add(i, handleValue(type, args.get(i)));
+                } else {
+                    newArgs.add(i, getDefaultJavaTypeValue(type));
+                }
+            }
+
+            step.setArgs(newArgs);
+        }
+    }
+
+    private String handleValue(String type, String value) {
         if (StringUtils.isEmpty(value)) {
-            return "null";
+            return getDefaultJavaTypeValue(type);
         }
 
         if (value.startsWith("${") && value.endsWith("}")) {
             return value.substring(2, value.length() - 1);
-        } else { // 普通字符串
+        }
+
+        if ("String".equals(type) || "java.lang.String".equals(type)) {
             return "\"" + value + "\"";
+        }
+
+        return value;
+    }
+
+    private String getDefaultJavaTypeValue(String type) {
+        if ("byte".equals(type) || "short".equals(type) || "int".equals(type)
+                || "long".equals(type) || "float".equals(type) || "double".equals(type)) {
+            return "0";
+        } else if ("char".equals(type)) {
+            return "'\\u0000'";
+        } else if ("boolean".equals(type)) {
+            return "false";
+        } else {
+            return "null";
         }
     }
 }

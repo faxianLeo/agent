@@ -5,6 +5,8 @@ import com.android.ddmlib.InstallException;
 import com.daxiang.App;
 import com.daxiang.core.PortProvider;
 import com.daxiang.core.mobile.Mobile;
+import com.daxiang.core.mobile.appium.AppiumNativePageSourceHandler;
+import com.daxiang.model.page.Page;
 import com.daxiang.server.ServerClient;
 import com.daxiang.core.mobile.MobileDevice;
 import com.daxiang.core.mobile.android.scrcpy.Scrcpy;
@@ -14,7 +16,6 @@ import com.daxiang.core.mobile.android.stf.Minicap;
 import com.daxiang.core.mobile.android.stf.Minitouch;
 import com.daxiang.core.mobile.appium.AndroidNativePageSourceHandler;
 import com.daxiang.core.mobile.appium.AppiumServer;
-import com.daxiang.utils.FileUtil;
 import com.daxiang.utils.Terminal;
 import com.daxiang.utils.UUIDUtil;
 import io.appium.java_client.android.AndroidDriver;
@@ -51,6 +52,7 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class AndroidDevice extends MobileDevice {
 
+    public static final int PLATFORM = 1;
     public static final String TMP_FOLDER = "/data/local/tmp";
 
     private Integer sdkVersion;
@@ -67,7 +69,6 @@ public class AndroidDevice extends MobileDevice {
     public AndroidDevice(Mobile mobile, IDevice iDevice, AppiumServer appiumServer) {
         super(mobile, appiumServer);
         this.iDevice = iDevice;
-        this.nativePageSourceHandler = new AndroidNativePageSourceHandler();
     }
 
     @Override
@@ -87,8 +88,6 @@ public class AndroidDevice extends MobileDevice {
         capabilities.setCapability("skipServerInstallation", true);
         capabilities.setCapability("skipDeviceInitialization", true);
         capabilities.setCapability("skipUnlock", true);
-        // 这个暂时用不到 先skip提升性能
-        capabilities.setCapability("skipLogcatCapture", true);
 
         if (!greaterOrEqualsToAndroid5()) { // 小于安卓5，必须指定app，否则会创建driver失败
             capabilities.setCapability("appPackage", "io.appium.android.apis");
@@ -141,7 +140,9 @@ public class AndroidDevice extends MobileDevice {
 
         if (appIsUrl) {
             try {
-                app = FileUtil.downloadFile(app).getAbsolutePath();
+                File appFile = new File(UUIDUtil.getUUID());
+                FileUtils.copyURLToFile(new URL(app), appFile);
+                app = appFile.getAbsolutePath();
             } catch (IOException e) {
                 throw new RuntimeException(e);
             }
@@ -162,6 +163,21 @@ public class AndroidDevice extends MobileDevice {
                 FileUtils.deleteQuietly(new File(app));
             }
         }
+    }
+
+    @Override
+    public int getNativePageType() {
+        return Page.TYPE_ANDROID_NATIVE;
+    }
+
+    @Override
+    public AppiumNativePageSourceHandler newAppiumNativePageSourceHandler() {
+        return new AndroidNativePageSourceHandler();
+    }
+
+    @Override
+    public String getLogType() {
+        return "logcat";
     }
 
     @Override

@@ -6,7 +6,6 @@ import com.android.ddmlib.NullOutputReceiver;
 import com.daxiang.App;
 import com.daxiang.core.PortProvider;
 import com.daxiang.core.mobile.android.AndroidDevice;
-import com.daxiang.core.mobile.android.AndroidImgDataConsumer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -18,6 +17,7 @@ import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /**
  * Created by jiangyitao.
@@ -51,8 +51,8 @@ public class Scrcpy {
         this.iDevice = iDevice;
     }
 
-    public synchronized void start(AndroidImgDataConsumer androidImgDataConsumer) throws Exception {
-        Assert.notNull(androidImgDataConsumer, "dataConsumer cannot be null");
+    public synchronized void start(Consumer<ByteBuffer> consumer) throws Exception {
+        Assert.notNull(consumer, "consumer cannot be null");
 
         if (isRunning) {
             return;
@@ -60,13 +60,35 @@ public class Scrcpy {
 
         // 由于scrcpy启动后会删除Mobile里的scrcpy，所以每次都需要重新push
         // Scrcpy.server - Server.java unlinkSelf()
+        // 1.12.1 -> 1.17 已经移除了unlinkSelf()，先保留这个逻辑
         pushScrcpyToDevice();
 
         CountDownLatch countDownLatch = new CountDownLatch(1);
 
         new Thread(() -> {
             try {
-                String startCmd = String.format("CLASSPATH=%s app_process / com.genymobile.scrcpy.Server %s %d %s 60 true - true true",
+                // 2021.1.19: 1.12.1 -> 1.17
+                String startCmd = String.format("CLASSPATH=%s app_process / com.genymobile.scrcpy.Server " +
+                                "%s " +    // scrcpyVersion
+                                "info " +  // logLevel
+                                "%d " +    // maxSize
+                                "%s " +    // bitRate
+                                "60 " +    // maxFps
+                                "-1 " +    // lockedVideoOrientation
+                                "true " +  // tunnelForward
+                                "- " +     // crop
+                                "true " +  // sendFrameMeta
+                                "true " +  // control
+                                "0 " +     // displayId https://github.com/Genymobile/scrcpy/pull/1177/files
+                                "true " +  // showTouches
+                                "true " +  // stayAwake
+                                /*
+                                codecOptions: 适配broadway.js
+                                "level": 0x100  format.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel3);
+                                "profile": 0x01 format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline);
+                                 */
+                                "level=256,profile=1 " + // codecOptions
+                                "-",       // encoderName https://github.com/Genymobile/scrcpy/pull/1827
                         REMOTE_SCRCPY_PATH,
                         App.getProperty("scrcpyVersion"),
                         maxSize,
@@ -100,7 +122,12 @@ public class Scrcpy {
             }
         }).start();
 
-        countDownLatch.await(30, TimeUnit.SECONDS);
+        int scrcpyStartTimeoutInSeconds = 30;
+        boolean scrcpyStartSuccess = countDownLatch.await(scrcpyStartTimeoutInSeconds, TimeUnit.SECONDS);
+        if (!scrcpyStartSuccess) {
+            throw new RuntimeException(String.format("[%s]启动scrcpy失败，超时时间：%d秒", mobileId, scrcpyStartTimeoutInSeconds));
+        }
+
         log.info("[{}]scrcpy启动完成", mobileId);
         isRunning = true;
 
@@ -162,7 +189,7 @@ public class Scrcpy {
                         packet[i] = (byte) screenStream.read();
                     }
 
-                    androidImgDataConsumer.consume(ByteBuffer.wrap(packet, 0, packetSize));
+                    consumer.accept(ByteBuffer.wrap(packet, 0, packetSize));
                 }
             } catch (IndexOutOfBoundsException ign) {
             } catch (Exception e) {
@@ -214,6 +241,11 @@ public class Scrcpy {
         iDevice.executeShellCommand(chmodCmd, new NullOutputReceiver());
     }
 
+    // android.view.MotionEvent
+    private static final byte ACTION_DOWN = 0;
+    private static final byte ACTION_UP = 1;
+    private static final byte ACTION_MOVE = 2;
+
     public void touchDown(int x, int y, int screenWidth, int screenHeight) {
         commitTouchEvent(ACTION_DOWN, x, y, screenWidth, screenHeight);
     }
@@ -226,35 +258,12 @@ public class Scrcpy {
         commitTouchEvent(ACTION_MOVE, x, y, screenWidth, screenHeight);
     }
 
-    public void home() {
-        commitKeycode(KEYCODE_HOME);
-    }
-
-    public void back() {
-        commitKeycode(KEYCODE_BACK);
-    }
-
-    public void menu() {
-        commitKeycode(KEYCODE_MENU);
-    }
-
-    public void power() {
-        commitKeycode(KEYCODE_POWER);
-    }
-
     // Scrcpy.server ControlMessage
-    private static final int TYPE_INJECT_TOUCH_EVENT = 2;
-    private static final int TYPE_INJECT_KEYCODE = 0;
-
-    // android.view.MotionEvent
-    private static final int ACTION_DOWN = 0;
-    private static final int ACTION_UP = 1;
-    private static final int ACTION_MOVE = 2;
-
+    private static final byte TYPE_INJECT_TOUCH_EVENT = 2;
     private ByteBuffer touchEventBuffer = ByteBuffer.allocate(28);
 
     // Scrcpy.server ControlMessageReader.parseInjectTouchEvent
-    private void commitTouchEvent(int actionType, int x, int y, int screenWidth, int screenHeight) {
+    private void commitTouchEvent(byte actionType, int x, int y, int screenWidth, int screenHeight) {
         // Scrcpy.server Device.computeVideoSize
         // 由于H264只接收8的倍数的宽高，所以scrcpy重新计算了video size
         // scrcpy输出的video size不能直接拿来用，否则会出现commitTouchEvent无效的问题
@@ -266,8 +275,8 @@ public class Scrcpy {
 
         touchEventBuffer.rewind();
 
-        touchEventBuffer.put((byte) TYPE_INJECT_TOUCH_EVENT);
-        touchEventBuffer.put((byte) actionType);
+        touchEventBuffer.put(TYPE_INJECT_TOUCH_EVENT);
+        touchEventBuffer.put(actionType);
         touchEventBuffer.putLong(-1L); // pointerId
         touchEventBuffer.putInt(x);
         touchEventBuffer.putInt(y);
@@ -279,29 +288,29 @@ public class Scrcpy {
         commit(touchEventBuffer.array());
     }
 
-    // android.view.KeyEvent
-    private static final int KEYCODE_HOME = 3;
-    private static final int KEYCODE_BACK = 4;
-    private static final int KEYCODE_MENU = 82;
-    private static final int KEYCODE_POWER = 26;
-    private static final int KEY_EVENT_ACTION_DOWN = 0;
-    private static final int KEY_EVENT_ACTION_UP = 1;
-
-    private ByteBuffer keycodeBuffer = ByteBuffer.allocate(20);
+    private static final byte KEY_EVENT_ACTION_DOWN = 0;
+    private static final byte KEY_EVENT_ACTION_UP = 1;
 
     // Scrcpy.server ControlMessageReader.parseInjectKeycode
-    private void commitKeycode(int keycode) {
+    public void keyDown(int keycode, int metaState) {
+        commitKeycode(keycode, metaState, KEY_EVENT_ACTION_DOWN);
+    }
+
+    public void keyUp(int keycode, int metaState) {
+        commitKeycode(keycode, metaState, KEY_EVENT_ACTION_UP);
+    }
+
+    private static final byte TYPE_INJECT_KEYCODE = 0;
+    private ByteBuffer keycodeBuffer = ByteBuffer.allocate(14);
+
+    private void commitKeycode(int keycode, int metaState, byte keyDownOrUp) {
         keycodeBuffer.rewind();
 
-        keycodeBuffer.put((byte) TYPE_INJECT_KEYCODE);
-        keycodeBuffer.put((byte) KEY_EVENT_ACTION_DOWN); // 按下
-        keycodeBuffer.putInt(keycode); // keycode
-        keycodeBuffer.putInt(0); // metaState
-
-        keycodeBuffer.put((byte) TYPE_INJECT_KEYCODE);
-        keycodeBuffer.put((byte) KEY_EVENT_ACTION_UP); // 抬起
-        keycodeBuffer.putInt(keycode); // keycode
-        keycodeBuffer.putInt(0); // metaState
+        keycodeBuffer.put(TYPE_INJECT_KEYCODE);
+        keycodeBuffer.put(keyDownOrUp);
+        keycodeBuffer.putInt(keycode);
+        keycodeBuffer.putInt(0); // repeat先简单处理 https://github.com/Genymobile/scrcpy/issues/1013
+        keycodeBuffer.putInt(metaState);
 
         commit(keycodeBuffer.array());
     }

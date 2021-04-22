@@ -63,7 +63,7 @@ public class AndroidDeviceChangeListener extends MobileChangeHandler implements 
 
         Mobile mobile = new Mobile();
 
-        mobile.setPlatform(MobileDevice.PLATFORM_ANDROID);
+        mobile.setPlatform(AndroidDevice.PLATFORM);
         mobile.setCreateTime(new Date());
         mobile.setId(mobileId);
         mobile.setSystemVersion(AndroidUtil.getAndroidVersion(AndroidUtil.getSdkVersion(iDevice)));
@@ -109,7 +109,7 @@ public class AndroidDeviceChangeListener extends MobileChangeHandler implements 
         log.info("[{}]初始化appium完成", mobileId);
 
         // 截图并上传到服务器
-        UploadFile uploadFile = androidDevice.screenshotThenUploadToServer();
+        UploadFile uploadFile = androidDevice.screenshotAndUploadToServer();
         mobile.setImgPath(uploadFile.getFilePath());
 
         driver.quit();
